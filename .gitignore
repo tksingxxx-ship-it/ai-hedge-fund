@@ -29,7 +29,8 @@ ENV/
 
 # IDE
 .idea/
-.vscode/
+.vscode/*
+!.vscode/tasks.json
 .cursor/
 *.swp
 *.swo
@@ -44,6 +45,9 @@ Thumbs.db
 # graph
 *.png
 !docs/evidence/*.png
+
+# Virtual office preview state (Codespaces and local). Not a real book.
+.office-preview/
 
 # Virtual office
 web/node_modules/

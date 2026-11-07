@@ -50,14 +50,21 @@ export function Shell({ health, children }: { health: Health | null; children: R
             <div className="sub">Completed sessions through {health?.completed_through || "—"}</div>
           </div>
           <div className="actions">
-            {health?.fixtures_allowed && <span className="tag fixture">FIXTURES ENABLED</span>}
-            <span className={`tag ${health?.data_configured ? "live" : ""}`}>
-              {health?.data_configured ? "DATA KEY SET" : "DATA KEY MISSING"}
+            {health?.fixture_only && <span className="tag fixture">FIXTURE ONLY</span>}
+            {!health?.fixture_only && health?.fixtures_allowed && <span className="tag fixture">FIXTURES ENABLED</span>}
+            <span className={`tag ${!health?.fixture_only && health?.data_configured ? "live" : ""}`}>
+              {health?.fixture_only ? "EXTERNAL CALLS OFF" : health?.data_configured ? "DATA KEY SET" : "DATA KEY MISSING"}
             </span>
           </div>
         </header>
         <div className="content">
-          {health?.fixtures_allowed && (
+          {health?.fixture_only && (
+            <div className="banner">
+              Fixture-only preview. Live market data and model calls are disabled, and inherited API keys are not used.
+              Tagged fixture results are the engine on synthetic prices and canned model text, not a provider or a live print.
+            </div>
+          )}
+          {!health?.fixture_only && health?.fixtures_allowed && (
             <div className="banner">
               Fixture mode is enabled for this process. Anything tagged fixture is the real engine running on
               synthetic prices and canned model text. It is not a market print and not a provider response.
@@ -74,6 +81,7 @@ export interface Health {
   status: string;
   engine_version: string;
   fixtures_allowed: boolean;
+  fixture_only?: boolean;
   live_brokers_enabled: boolean;
   data_configured: boolean;
   master_key_configured: boolean;

@@ -20,11 +20,11 @@ interface Job {
 export function Backtests() {
   const mandates = useData<{ mandates: Mandate[] }>("/api/mandates");
   const jobs = useData<{ backtests: Job[] }>("/api/backtests");
-  const health = useData<{ completed_through: string; fixtures_allowed: boolean }>("/api/health");
+  const health = useData<{ completed_through: string; fixtures_allowed: boolean; fixture_only?: boolean }>("/api/health");
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState("");
   useEffect(() => {
-    if (health.data) setMode((current) => current || (health.data!.fixtures_allowed ? "fixture" : "live"));
+    if (health.data) setMode((current) => (health.data!.fixture_only ? "fixture" : current || (health.data!.fixtures_allowed ? "fixture" : "live")));
   }, [health.data]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -70,8 +70,8 @@ export function Backtests() {
           <label>Idempotency key<input name="idempotency" placeholder="optional" /></label>
           <label>Execution
             <select name="mode" value={mode} onChange={(event) => setMode(event.target.value)}>
-              <option value="live">live</option>
-              {health.data?.fixtures_allowed && <option value="fixture">fixture</option>}
+              {!health.data?.fixture_only && <option value="live">live</option>}
+              {(health.data?.fixtures_allowed || health.data?.fixture_only) && <option value="fixture">fixture</option>}
             </select>
           </label>
           <button className="primary" type="submit">Run historical job</button>

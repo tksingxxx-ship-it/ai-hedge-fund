@@ -36,7 +36,7 @@ export function Research() {
   const strategies = useData<{ strategies: Strategy[] }>("/api/strategies");
   const universes = useData<{ presets: Preset[]; disabled_reason?: string | null }>("/api/universes");
   const missions = useData<{ missions: Mission[] }>("/api/missions");
-  const health = useData<{ completed_through: string; fixtures_allowed: boolean }>("/api/health");
+  const health = useData<{ completed_through: string; fixtures_allowed: boolean; fixture_only?: boolean }>("/api/health");
   const [error, setError] = useState<string | null>(null);
   const [presetOn, setPresetOn] = useState(false);
   const [asOf, setAsOf] = useState("");
@@ -44,7 +44,7 @@ export function Research() {
   useEffect(() => {
     if (!health.data) return;
     setAsOf((current) => current || health.data!.completed_through);
-    setMode((current) => current || (health.data!.fixtures_allowed ? "fixture" : "live"));
+    setMode((current) => (health.data!.fixture_only ? "fixture" : current || (health.data!.fixtures_allowed ? "fixture" : "live")));
   }, [health.data]);
   const preset = universes.data?.presets[0];
 
@@ -114,8 +114,8 @@ export function Research() {
           </div>
           <label>Execution
             <select name="mode" value={mode} onChange={(event) => setMode(event.target.value)}>
-              <option value="live">live</option>
-              {health.data?.fixtures_allowed && <option value="fixture">fixture</option>}
+              {!health.data?.fixture_only && <option value="live">live</option>}
+              {(health.data?.fixtures_allowed || health.data?.fixture_only) && <option value="fixture">fixture</option>}
             </select>
           </label>
           <button className="primary" type="submit">Run native analysts</button>

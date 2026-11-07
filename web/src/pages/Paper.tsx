@@ -20,11 +20,11 @@ interface SessionRow { session: string; nav: number; rebalance: boolean }
 export function Paper() {
   const mandates = useData<{ mandates: Mandate[] }>("/api/mandates");
   const funds = useData<{ funds: Fund[] }>("/api/paper/funds");
-  const health = useData<{ fixtures_allowed: boolean }>("/api/health");
+  const health = useData<{ fixtures_allowed: boolean; fixture_only?: boolean }>("/api/health");
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState("");
   useEffect(() => {
-    if (health.data) setMode((current) => current || (health.data!.fixtures_allowed ? "fixture" : "live"));
+    if (health.data) setMode((current) => (health.data!.fixture_only ? "fixture" : current || (health.data!.fixtures_allowed ? "fixture" : "live")));
   }, [health.data]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -65,8 +65,8 @@ export function Paper() {
           <label>Symbols<input name="tickers" required placeholder="AAPL MSFT" /></label>
           <label>Execution
             <select name="mode" value={mode} onChange={(event) => setMode(event.target.value)}>
-              <option value="live">live</option>
-              {health.data?.fixtures_allowed && <option value="fixture">fixture</option>}
+              {!health.data?.fixture_only && <option value="live">live</option>}
+              {(health.data?.fixtures_allowed || health.data?.fixture_only) && <option value="fixture">fixture</option>}
             </select>
           </label>
           <button className="primary" type="submit">Deploy paper fund</button>

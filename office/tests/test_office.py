@@ -433,6 +433,43 @@ def test_restart_marks_a_running_job_interrupted(office_env):
     assert "restart" in (body.get("error") or "")
 
 
+def test_fixture_only_drops_inherited_keys_and_refuses_live(office_env, monkeypatch):
+    monkeypatch.setenv("OFFICE_FIXTURE_ONLY", "1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-inheritedvalue0123456789")
+    monkeypatch.setenv("FINANCIAL_DATASETS_API_KEY", "fd-inherited-key-value")
+    from office.app import create_app, frontend_dir
+    from office.config import Config
+    from office.tests.conftest import GuardedClient
+
+    assert (frontend_dir() / "index.html").is_file()
+    config = Config.from_env()
+    assert config.fixture_only is True
+    assert config.allow_fixtures is True
+    assert config.host == "127.0.0.1"
+    assert "hedge-fund-office-preview" in str(config.home) or str(office_env) in str(config.home)
+    app = create_app(config)
+    with GuardedClient(TestClient(app)) as preview:
+        health = preview.get("/api/health").json()
+        assert health["fixture_only"] is True
+        assert health["external_calls"] == "disabled"
+        assert health["data_configured"] is False
+        assert health["live_brokers_enabled"] is False
+        live = preview.post("/api/missions", json={
+            "title": "no live",
+            "strategies": ["earnings-drift"],
+            "tickers": ["AAPL"],
+            "as_of": completed_through(),
+            "execution_mode": "live",
+            "max_symbols": 5,
+        })
+        assert live.status_code == 400
+        assert "sk-ant-inherited" not in live.text
+        assert "fd-inherited" not in live.text
+        refresh = preview.post("/api/universes/refresh")
+        assert refresh.status_code == 403
+        assert refresh.json()["error"]["code"] == "fixture_only"
+
+
 def test_skip_risk_is_not_a_field(client):
     response = client.post("/api/backtests", json={
         "mandate_name": "missing",

@@ -17,6 +17,13 @@ exclude = [
     "hedge_fund/conftest.py",
     "office/tests/**",
 ]
+include = [
+    { path = "hedge_fund/**/*.yaml", format = ["sdist", "wheel"] },
+    { path = "hedge_fund/**/*.json", format = ["sdist", "wheel"] },
+    { path = "hedge_fund/**/*.tcss", format = ["sdist", "wheel"] },
+    { path = "office/data/*.json", format = ["sdist", "wheel"] },
+    { path = "office/static/**/*", format = ["sdist", "wheel"] },
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"

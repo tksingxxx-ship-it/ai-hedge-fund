@@ -16,12 +16,24 @@ from hedge_fund.tui.keys import apply_credentials
 from office.api import register
 from office.config import Config
 from office.db import init_db, recover_inflight
+from office.isolation import drop_inherited_credentials
 from office.redact import install_redaction, redact
 from office.secrets import load_into_environ
 from office.security import install as install_guard
 
 log = logging.getLogger("office")
-DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+
+
+def frontend_dir() -> Path:
+    """Built UI shipped inside the package, else a local web/dist checkout.
+
+    An installed wheel has no repository root. ``office/static`` is the copy
+    ``npm run build`` is copied into before the wheel is built.
+    """
+    packaged = Path(__file__).resolve().parent / "static"
+    if (packaged / "index.html").is_file():
+        return packaged
+    return Path(__file__).resolve().parent.parent / "web" / "dist"
 
 
 @asynccontextmanager
@@ -29,10 +41,15 @@ async def _lifespan(app: FastAPI):
     config: Config = app.state.config
     config.ensure_dirs()
     init_db(config)
-    apply_credentials()
-    loaded = load_into_environ(config.secrets_path)
-    if loaded:
-        log.info("loaded %s stored credential names", len(loaded))
+    if config.fixture_only:
+        removed = drop_inherited_credentials()
+        if removed:
+            log.info("fixture-only mode dropped %s inherited credential names", len(removed))
+    else:
+        apply_credentials()
+        loaded = load_into_environ(config.secrets_path)
+        if loaded:
+            log.info("loaded %s stored credential names", len(loaded))
     n = recover_inflight(config)
     if n:
         log.info("marked %s in-flight office rows after restart", n)
@@ -73,24 +90,26 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     install_guard(app, config)
     register(app)
-    if (DIST / "index.html").is_file():
-        assets = DIST / "assets"
+    dist = frontend_dir()
+    if (dist / "index.html").is_file():
+        assets = dist / "assets"
         if assets.is_dir():
             app.mount("/assets", StaticFiles(directory=assets), name="assets")
 
         @app.get("/")
         def index():
-            return FileResponse(DIST / "index.html")
+            return FileResponse(dist / "index.html")
 
         @app.get("/{path:path}")
         def spa(path: str):
             if path.startswith("api/"):
                 raise HTTPException(404)
-            candidate = (DIST / path).resolve()
-            if not str(candidate).startswith(str(DIST.resolve())):
+            root = dist.resolve()
+            candidate = (dist / path).resolve()
+            if not str(candidate).startswith(str(root)):
                 raise HTTPException(404)
             if candidate.is_file():
                 return FileResponse(candidate)
-            return FileResponse(DIST / "index.html")
+            return FileResponse(dist / "index.html")
 
     return app

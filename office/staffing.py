@@ -89,6 +89,8 @@ def live_blockers(config: Config, spec: FundSpec) -> list[str]:
 
 
 def build_fund(config: Config, spec: FundSpec, *, mode: str, blind: bool) -> Fund:
+    if config.fixture_only and mode != "fixture":
+        raise FixtureDisabled("Fixture-only mode refuses to build a live fund.")
     if mode == "live":
         blockers = live_blockers(config, spec)
         if blockers:
@@ -133,6 +135,8 @@ def build_fund(config: Config, spec: FundSpec, *, mode: str, blind: bool) -> Fun
 
 @contextmanager
 def data_client(config: Config, mode: str, *, live_quotes: bool = False) -> Iterator:
+    if config.fixture_only and mode != "fixture":
+        raise FixtureDisabled("Fixture-only mode refuses live market data.")
     if mode == "fixture":
         if not config.allow_fixtures:
             raise FixtureDisabled("Fixture mode is off.")

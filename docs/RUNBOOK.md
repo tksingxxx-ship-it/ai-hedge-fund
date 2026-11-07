@@ -36,6 +36,8 @@ poetry run python -m office
 
 Open http://127.0.0.1:8765 . The process binds to localhost. It does not deploy anywhere.
 
+A checkout is not required to run the office. The wheel and `docs/INSTALL-RUNTIME.md` install `hedge_fund`, `office`, the built UI, and the universe file. `OFFICE_FIXTURE_ONLY=1` refuses live data and model calls and ignores inherited API keys.
+
 `make office` installs the UI dependencies, builds `web/dist`, and starts the same process.
 
 ### Useful environment variables

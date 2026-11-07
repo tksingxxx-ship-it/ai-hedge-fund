@@ -190,6 +190,11 @@ class CredentialIn(_Model):
 def _mode(config: Config, mode: str) -> str:
     if mode not in {"live", "fixture"}:
         raise ValueError("execution_mode must be live or fixture")
+    if config.fixture_only and mode != "fixture":
+        raise FixtureDisabled(
+            "Fixture-only mode is on. Live market and model calls are disabled, "
+            "and inherited credentials are not used."
+        )
     if mode == "fixture" and not config.allow_fixtures:
         raise FixtureDisabled(
             "Fixture mode is disabled. Start the office with OFFICE_ALLOW_FIXTURES=1 to use it. "
@@ -217,8 +222,10 @@ def health(request: Request):
         "engine_version": VERSION,
         "office": "0.1.0",
         "fixtures_allowed": config.allow_fixtures,
+        "fixture_only": config.fixture_only,
         "live_brokers_enabled": False,
-        "data_configured": has_data_credential(),
+        "external_calls": "disabled" if config.fixture_only else "allowed-when-configured",
+        "data_configured": False if config.fixture_only else has_data_credential(),
         "master_key_configured": master_configured(),
         "completed_through": completed_through(),
     }
@@ -370,8 +377,14 @@ def universes(request: Request):
 @router.post("/universes/refresh")
 def refresh_universe(request: Request):
     """Download the publisher files again. A failed download leaves the previous file."""
+    config = _config(request)
+    if config.fixture_only:
+        return _error(
+            403, "fixture_only",
+            "Universe refresh is disabled in fixture-only mode. It would contact external publishers.",
+        )
     from office.universe_sources import UniverseUnverified, refresh_file
-    dest = _preset_path(_config(request))
+    dest = _preset_path(config)
     try:
         preset = refresh_file(dest)
     except (UniverseUnverified, OSError, ValueError) as exc:

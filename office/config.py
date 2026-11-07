@@ -34,18 +34,32 @@ class Config:
     max_backtest_sessions: int
     allow_remote: bool
     api_token: str
+    fixture_only: bool
 
     @classmethod
     def from_env(cls) -> Config:
-        home = _path("OFFICE_HOME", USER_DIR / "office")
+        fixture_only = _flag("OFFICE_FIXTURE_ONLY")
+        if fixture_only:
+            # Preview data stays out of a real ~/.hedge-fund book unless overridden.
+            home = _path("OFFICE_HOME", Path.home() / ".hedge-fund-office-preview")
+            paper = _path("OFFICE_PAPER_ROOT", home / "paper")
+            research = _path("OFFICE_RESEARCH_DIR", home / "research")
+            mandates = _path("OFFICE_MANDATES_DIR", home / "mandates")
+            allow_fixtures = True
+        else:
+            home = _path("OFFICE_HOME", USER_DIR / "office")
+            paper = _path("OFFICE_PAPER_ROOT", PAPER_DIR)
+            research = _path("OFFICE_RESEARCH_DIR", RESEARCH_DIR)
+            mandates = _path("OFFICE_MANDATES_DIR", MANDATES_DIR)
+            allow_fixtures = _flag("OFFICE_ALLOW_FIXTURES")
         return cls(
             home=home,
             db_path=_path("OFFICE_DB", home / "office.sqlite3"),
             secrets_path=_path("OFFICE_SECRETS", home / "secrets.json"),
-            paper_root=_path("OFFICE_PAPER_ROOT", PAPER_DIR),
-            research_dir=_path("OFFICE_RESEARCH_DIR", RESEARCH_DIR),
-            mandates_dir=_path("OFFICE_MANDATES_DIR", MANDATES_DIR),
-            allow_fixtures=_flag("OFFICE_ALLOW_FIXTURES"),
+            paper_root=paper,
+            research_dir=research,
+            mandates_dir=mandates,
+            allow_fixtures=allow_fixtures,
             eager=_flag("OFFICE_EAGER"),
             dev_cors=_flag("OFFICE_DEV_CORS"),
             host=os.environ.get("OFFICE_HOST", "127.0.0.1"),
@@ -53,6 +67,7 @@ class Config:
             max_backtest_sessions=int(os.environ.get("OFFICE_MAX_BACKTEST_SESSIONS", "800")),
             allow_remote=_flag("OFFICE_ALLOW_REMOTE"),
             api_token=os.environ.get("OFFICE_API_TOKEN", ""),
+            fixture_only=fixture_only,
         )
 
     def ensure_dirs(self) -> None:

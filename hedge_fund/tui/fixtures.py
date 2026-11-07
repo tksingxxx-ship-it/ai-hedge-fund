@@ -17,7 +17,9 @@ def render(renderable):
     output = io.StringIO()
     # soft_wrap: long header lines stay on one line, so assertions can match
     # phrases without guessing where a wrap would land.
-    Console(file=output, width=140, color_system=None).print(renderable, soft_wrap=True)
+    # Height is set with width. Rich 14.3.4 ignores an explicit width on a
+    # dumb terminal unless both dimensions are provided (Console.size).
+    Console(file=output, width=140, height=40, color_system=None).print(renderable, soft_wrap=True)
     return output.getvalue()
 
 

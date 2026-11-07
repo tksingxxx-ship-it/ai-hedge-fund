@@ -14,3 +14,11 @@ console:
 
 test:
 	poetry run pytest hedge_fund/
+
+# Virtual office. Builds the UI, then serves API and UI on 127.0.0.1:8765.
+office:
+	cd web && npm install && npm run build
+	poetry run python -m office
+
+office-test:
+	poetry run pytest office/tests hedge_fund -q

@@ -1,0 +1,25 @@
+{
+  "id": "us-swing-ndx-soxx",
+  "name": "US multi-day swing: Nasdaq-100 plus SOXX holdings",
+  "as_of": "2026-03-01",
+  "source": "Static snapshot shipped with the office. Not a vendor index feed and not verified against a live constituent file on 2026-11-07. Edit this file to replace it.",
+  "survivorship_warning": "These are current-style constituents. Using them as the universe for dates before a name joined, or after a name left, is survivorship bias. Historical research should use the constituents that existed on each date. This preset does not do that.",
+  "note": "A research convenience for a US equity swing universe. It does not add a strategy and does not replace native analyst classes.",
+  "nasdaq_100": [
+    "AAPL", "ABNB", "ADBE", "ADI", "ADP", "ADSK", "AEP", "AMAT", "AMD", "AMGN",
+    "AMZN", "APP", "ARM", "ASML", "AVGO", "AXON", "AZN", "BIIB", "BKNG", "BKR",
+    "CCEP", "CDNS", "CDW", "CEG", "CHTR", "COST", "CPRT", "CRWD", "CSCO", "CSGP",
+    "CSX", "CTAS", "CTSH", "DASH", "DDOG", "DXCM", "EA", "EXC", "FANG", "FAST",
+    "FTNT", "GEHC", "GFS", "GILD", "GOOG", "GOOGL", "HON", "IDXX", "INTC", "INTU",
+    "ISRG", "KDP", "KHC", "KLAC", "LIN", "LRCX", "MAR", "MCHP", "MDLZ", "MELI",
+    "META", "MNST", "MRVL", "MSFT", "MSTR", "MU", "NFLX", "NVDA", "NXPI", "ODFL",
+    "ON", "ORLY", "PANW", "PAYX", "PCAR", "PDD", "PEP", "PLTR", "PYPL", "QCOM",
+    "REGN", "ROP", "ROST", "SBUX", "SNPS", "TEAM", "TMUS", "TSLA", "TTWO", "TXN",
+    "VRSK", "VRTX", "WBD", "WDAY", "XEL", "ZS"
+  ],
+  "soxx_extra": [
+    "ACLS", "ALAB", "ALGM", "AMKR", "COHR", "CRUS", "DIOD", "ENTG", "FORM",
+    "LSCC", "MKSI", "MPWR", "MTSI", "OLED", "ONTO", "POWI", "QRVO", "RMBS",
+    "SLAB", "SMTC", "SWKS", "TER", "TSM"
+  ]
+}

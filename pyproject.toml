@@ -9,11 +9,13 @@ homepage = "https://github.com/virattt/ai-hedge-fund"
 repository = "https://github.com/virattt/ai-hedge-fund"
 keywords = ["ai", "hedge-fund", "trading", "llm", "backtesting", "agents"]
 packages = [
-    { include = "hedge_fund", from = "." }
+    { include = "hedge_fund", from = "." },
+    { include = "office", from = "." },
 ]
 exclude = [
     "hedge_fund/**/test_*.py",
     "hedge_fund/conftest.py",
+    "office/tests/**",
 ]
 
 [tool.poetry.dependencies]
@@ -35,12 +37,17 @@ pyyaml = "^6.0.3"
 textual = "^8.2.8"
 # Pay Financial Datasets per call with x402 instead of an API key: `pip install aihf[x402]`.
 x402 = {version = "^2.26", extras = ["evm", "requests"], optional = true}
+# Virtual office HTTP layer: `pip install 'aihf[office]'`.
+fastapi = {version = ">=0.115", optional = true}
+uvicorn = {version = ">=0.32", optional = true}
 
 [tool.poetry.extras]
 x402 = ["x402"]
+office = ["fastapi", "uvicorn"]
 
 [tool.poetry.scripts]
 aihf = "hedge_fund.run:main"
+aihf-office = "office.__main__:main"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

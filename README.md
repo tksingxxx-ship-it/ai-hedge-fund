@@ -59,6 +59,16 @@ With no arguments, this launches the interactive terminal app. It has two modes:
 
 
 
+## Virtual office
+
+A local web desk over this same engine lives in `office/` and `web/`. It does not replace `aihf`, and it does not place live brokerage orders. Install, run, and the acceptance record are in [docs/RUNBOOK.md](docs/RUNBOOK.md). Architecture is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+```bash
+poetry install -E office
+cd web && npm install && npm run build && cd ..
+poetry run python -m office
+```
+
 ## Development
 
 ```bash

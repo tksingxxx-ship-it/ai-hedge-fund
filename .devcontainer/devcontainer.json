@@ -1,0 +1,33 @@
+{
+  "name": "AI Hedge Fund office fixture preview",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "hostRequirements": {
+    "cpus": 2
+  },
+  "forwardPorts": [8765],
+  "portsAttributes": {
+    "8765": {
+      "label": "Office fixture preview",
+      "onAutoForward": "notify",
+      "protocol": "http",
+      "visibility": "private"
+    }
+  },
+  "containerEnv": {
+    "OFFICE_FIXTURE_ONLY": "1",
+    "OFFICE_HOST": "127.0.0.1",
+    "OFFICE_PORT": "8765"
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["docs/CODESPACES.md"]
+    }
+  },
+  "remoteUser": "vscode"
+}

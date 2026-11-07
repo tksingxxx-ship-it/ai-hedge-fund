@@ -85,7 +85,7 @@ def _unrealized(lots, marks) -> float | None:
     return total
 
 
-def snapshot(directory: Path, *, execution_mode: str) -> dict:
+def snapshot(directory: Path, *, execution_mode: str, config=None) -> dict:
     deployed = load_deployed(directory)
     spec = deployed.spec
     ledger = Ledger(directory)
@@ -144,6 +144,8 @@ def snapshot(directory: Path, *, execution_mode: str) -> dict:
             "allocation": _mandate_allocation(spec),
             "broker": broker,
             "mismatch": None,
+            "factor_exposures": None,
+            "factor_exposures_error": "No marked book, so beta and sector exposure are not computed.",
         })
         return base
 
@@ -240,7 +242,52 @@ def snapshot(directory: Path, *, execution_mode: str) -> dict:
         "marks_as_of": latest.session,
         "marks_note": "Marks are the session closes stored on the ledger record, not a live quote.",
     })
+    factor, factor_error = _factor_book(config, execution_mode, spec, latest, positions)
+    base["factor_exposures"] = factor
+    base["factor_exposures_error"] = factor_error
     return base
+
+
+def _factor_book(config, execution_mode: str, spec, latest, positions) -> tuple[dict | None, str | None]:
+    """Book beta, sector nets, and modelled vol from hedge_fund.risk.exposures.
+
+    Empty books stay empty. A data failure is the error string, not a guessed beta.
+    """
+    if config is None:
+        return None, "Office config was not passed, so the factor model was not run."
+    if execution_mode not in {"fixture", "live"}:
+        return None, "The fund's data source is unlabelled, so exposures are not requested."
+    weights = {}
+    if not latest.nav:
+        return None, "NAV is zero, so weights are undefined."
+    for row in positions:
+        if not row["shares"]:
+            continue
+        if row["market_value"] is None:
+            return None, f"{row['ticker']} has no mark, so the factor model was not run."
+        weights[row["ticker"]] = row["market_value"] / latest.nav
+    if not weights:
+        return None, "No positions. Book beta is not computed."
+    try:
+        from hedge_fund.pipeline.stages import history_start
+        from hedge_fund.risk.exposures import exposures
+        from office.staffing import data_client
+        start = history_start(latest.session[:10], 100)
+        with data_client(config, execution_mode) as client:
+            model = exposures(list(weights), spec.benchmark, latest.session[:10], client, start)
+    except Exception as exc:
+        from office.redact import redact
+        return None, redact(f"{type(exc).__name__}: {exc}")
+    return {
+        "as_of": model.as_of,
+        "source": "hedge_fund.risk.exposures.exposures",
+        "benchmark": spec.benchmark,
+        "benchmark_volatility": model.benchmark_volatility,
+        "book_beta": model.book_beta(weights),
+        "book_volatility": model.book_volatility(weights),
+        "sector_nets": model.sector_nets(weights),
+        "fixture": execution_mode == "fixture",
+    }, None
 
 
 def _mandate_allocation(spec) -> dict:

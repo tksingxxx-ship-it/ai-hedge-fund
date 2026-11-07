@@ -31,7 +31,7 @@ from office.db import (
 from office.fixtures import FixtureDisabled
 from office.jobs import run_backtest
 from office.paperflow import (
-    approve, build_plan, clear_halt, create_fund, execute, execution_mode, fund_dir, list_funds, set_halt,
+    approve, build_plan, clear_halt, create_fund, execute, execute_catch_up, execution_mode, fund_dir, list_funds, set_halt,
 )
 from office.portfolio import snapshot
 from office.research import queue_analyses, run_mission, validate_as_of
@@ -120,6 +120,7 @@ class MissionIn(_Model):
     max_rounds: int = Field(default=2, ge=1, le=2)
     max_symbols: int = Field(default=20, ge=1, le=80)
     timeout_seconds: int = Field(default=180, ge=5, le=3600)
+    discovery: bool = True
     start: bool = False
 
 
@@ -161,6 +162,7 @@ class PaperIn(_Model):
 
 class ApprovalIn(_Model):
     action: str
+    sessions: int = 1
 
 
 class TickIn(_Model):
@@ -347,10 +349,36 @@ def strategies():
     return {"strategies": strategy_library(), "layer": "native"}
 
 
+def _preset_path(config: Config):
+    return config.home / "universes" / "us-swing-ndx-soxx.json"
+
+
 @router.get("/universes")
-def universes():
-    preset = swing_preset()
-    return {"presets": [preset]}
+def universes(request: Request):
+    preset = swing_preset(_preset_path(_config(request)))
+    if preset is None:
+        return {
+            "presets": [],
+            "disabled_reason": (
+                "No verified universe is loaded. The office will not offer a hand-written "
+                "Nasdaq-100 or SOXX list. Refresh from the publisher files or type symbols."
+            ),
+        }
+    return {"presets": [preset], "disabled_reason": None}
+
+
+@router.post("/universes/refresh")
+def refresh_universe(request: Request):
+    """Download the publisher files again. A failed download leaves the previous file."""
+    from office.universe_sources import UniverseUnverified, refresh_file
+    dest = _preset_path(_config(request))
+    try:
+        preset = refresh_file(dest)
+    except (UniverseUnverified, OSError, ValueError) as exc:
+        return _error(502, "refresh_failed", str(exc))
+    except Exception as exc:
+        return _error(502, "refresh_failed", f"{type(exc).__name__}: {exc}")
+    return {"preset": preset, "current": False}
 
 
 @router.get("/providers")
@@ -362,6 +390,31 @@ def providers(request: Request):
     catalog["data_configured"] = has_data_credential()
     catalog["values_included"] = False
     return catalog
+
+
+class ParametersIn(_Model):
+    timeout_seconds: float = Field(ge=5, le=120)
+    max_tokens: int = Field(ge=256, le=8192)
+
+
+@router.get("/settings/parameters")
+def get_parameters(request: Request):
+    from office.staffing import llm_parameters
+    params = llm_parameters(_config(request))
+    return {
+        "timeout_seconds": params["timeout"],
+        "max_tokens": params["max_tokens"],
+        "supported": ["timeout", "max_tokens"],
+        "unsupported": ["temperature"],
+        "note": "make_llm accepts timeout and max_tokens. It has no temperature argument. These values apply only when the office builds a fund.",
+    }
+
+
+@router.put("/settings/parameters")
+def put_parameters(body: ParametersIn, request: Request):
+    set_setting(_config(request), "llm_timeout", str(body.timeout_seconds))
+    set_setting(_config(request), "llm_max_tokens", str(body.max_tokens))
+    return get_parameters(request)
 
 
 @router.put("/settings/model")
@@ -463,6 +516,7 @@ def create_mission(body: MissionIn, request: Request):
     budget = {
         "max_calls": body.max_calls, "max_rounds": body.max_rounds,
         "max_symbols": body.max_symbols, "timeout_seconds": body.timeout_seconds,
+        "discovery": body.discovery,
     }
     stamp = utcnow()
     with transaction(config) as conn:
@@ -637,7 +691,7 @@ def portfolio_one(name: str, request: Request):
     config = _config(request)
     try:
         directory = fund_dir(config, name)
-        return snapshot(directory, execution_mode=execution_mode(config, name))
+        return snapshot(directory, execution_mode=execution_mode(config, name), config=config)
     except FileNotFoundError:
         return _error(404, "not_found", "paper fund not found")
     except Exception as exc:
@@ -679,10 +733,10 @@ def paper_plan(name: str, request: Request):
 
 @router.post("/paper/funds/{name}/approvals")
 def paper_approve(name: str, body: ApprovalIn, request: Request):
-    if body.action not in {"tick", "redo"}:
-        return _error(400, "invalid", "action must be tick or redo")
+    if body.action not in {"tick", "redo", "catch_up"}:
+        return _error(400, "invalid", "action must be tick, redo, or catch_up")
     try:
-        return approve(_config(request), name, body.action)
+        return approve(_config(request), name, body.action, body.sessions)
     except FileNotFoundError:
         return _error(404, "not_found", "paper fund not found")
     except ValueError as exc:
@@ -710,6 +764,37 @@ def paper_tick(name: str, body: TickIn, request: Request):
               execution_mode=result["execution_mode"],
               payload={"fixture": result["fixture"], "nav": result["record"].get("nav")})
     return result
+
+
+@router.post("/paper/funds/{name}/catch-up")
+def paper_catch_up(name: str, body: TickIn, request: Request):
+    try:
+        result = execute_catch_up(_config(request), name, body.approval_id)
+    except FileNotFoundError:
+        return _error(404, "not_found", "paper fund not found")
+    except PermissionError as exc:
+        return _error(403, "approval_required", str(exc))
+    except ValueError as exc:
+        return _error(409, "refused", str(exc))
+    except Exception as exc:
+        from hedge_fund.pipeline import FundHalted
+        code = "halted" if isinstance(exc, FundHalted) else "failed"
+        return _error(409 if code == "halted" else 500, code, str(exc))
+    return result
+
+
+@router.post("/paper/funds/{name}/catch-up/{job_id}/cancel")
+def paper_catch_up_cancel(name: str, job_id: str, request: Request):
+    config = _config(request)
+    with transaction(config) as conn:
+        cur = conn.execute(
+            """UPDATE jobs SET cancel_requested=1, updated_at=?
+               WHERE id=? AND kind='paper_catch_up' AND status='running'""",
+            (utcnow(), job_id),
+        )
+    if cur.rowcount == 0:
+        return _error(409, "not_running", "that catch-up is not running")
+    return {"id": job_id, "cancel_requested": True, "fund": name}
 
 
 @router.post("/paper/funds/{name}/halt")

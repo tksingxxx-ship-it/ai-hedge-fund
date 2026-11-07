@@ -20,6 +20,9 @@ interface Book {
   scorecard_source?: string | null;
   allocation?: { strategies?: { name: string; slice: number }[]; final_weights?: Record<string, number>; source?: string };
   allocation_source?: string;
+  benchmark: string;
+  factor_exposures?: { book_beta: number; book_volatility: number; benchmark: string; benchmark_volatility: number; sector_nets: Record<string, number>; source: string; fixture: boolean } | null;
+  factor_exposures_error?: string | null;
 }
 interface Analyst { name: string; hit_rate: number | null; n_views: number; ic_mean: number | null; n_dates: number }
 interface Sleeve { name: string; pnl: number; return_pct: number; n_periods: number }
@@ -58,7 +61,7 @@ export function PortfolioBook() {
       {data.fixture && <div className="banner">Fixture-backed ledger. Marks are the fixture series, not the market.</div>}
       {data.ledger_error && <div className="banner danger">{data.ledger_error}</div>}
       {data.mismatch && <div className="banner danger">{data.mismatch}</div>}
-      <div className="row"><h3 style={{ margin: 0 }}>{data.name}</h3><Mode mode={data.execution_mode} /><span className="tag">{data.halted ? `halted: ${data.halted}` : "kill switch off"}</span></div>
+      <div className="row"><h3 style={{ margin: 0 }}>{data.name}</h3><Mode mode={data.execution_mode} /><span className="tag">benchmark {data.benchmark}</span><span className="tag">{data.halted ? `halted: ${data.halted}` : "kill switch off"}</span></div>
       <div className="grid stats">
         <Stat k="NAV" v={data.nav_is_marked ? money(data.nav) : money(data.capital)} d={data.nav_is_marked ? data.definitions.nav : "Deployed capital. No session has been marked."} />
         <Stat k="Total P&L" v={money(data.total_pnl)} tone={tone(data.total_pnl)} d={data.definitions.total_pnl} />
@@ -92,6 +95,15 @@ export function PortfolioBook() {
           )}
         </section>
         <section className="panel">
+          <h3>Factor exposures</h3>
+          {data.factor_exposures ? (
+            <p className="empty">
+              {data.factor_exposures.source}. Beta {data.factor_exposures.book_beta.toFixed(2)} vs {data.factor_exposures.benchmark}.
+              Benchmark vol {pct(data.factor_exposures.benchmark_volatility)}. Book vol {pct(data.factor_exposures.book_volatility)}.
+              Sectors {Object.entries(data.factor_exposures.sector_nets).map(([k, v]) => `${k} ${pct(v)}`).join(", ") || "none"}.
+              {data.factor_exposures.fixture ? " Fixture prices." : ""}
+            </p>
+          ) : <p className="empty">{data.factor_exposures_error || "Not computed."}</p>}
           <h3>Allocation</h3>
           <p className="empty">{data.allocation_source}</p>
           {(data.allocation?.strategies || []).map((row) => (

@@ -128,7 +128,7 @@ def _execute(config, mission, fund, client) -> None:
 
     tasks = _tasks(config, mission_id)
     _check(config, mission_id, deadline)
-    followups = _review(config, mission, tasks, budget)
+    followups = _review(config, mission, tasks, budget, staff)
     for task in followups:
         _check(config, mission_id, deadline)
         model = _find_model(staff, task["strategy"], task["agent"])
@@ -234,8 +234,8 @@ def _price(client, ticker: str, as_of: str):
     return matches[-1].close
 
 
-def _review(config, mission, tasks, budget) -> list[dict]:
-    """Compare findings. Escalate conflicts. Optionally queue one more analyst."""
+def _review(config, mission, tasks, budget, staff) -> list[dict]:
+    """Compare findings, ask each side once, escalate, then maybe one follow-up."""
     analyses = [t for t in tasks if t["kind"] == "analyze" and t["status"] == "completed" and t["result"]]
     by_ticker: dict[str, list] = {}
     for task in analyses:
@@ -258,31 +258,67 @@ def _review(config, mission, tasks, budget) -> list[dict]:
             "reasoning": s.reasoning, "abstained": bool(s.metadata.get("abstained")),
         } for s in signals]
         conflicts.append({"ticker": ticker, "signals": detail})
+        replies = []
+        asked = cio.representatives(signals)
+        for own in asked:
+            if used >= int(budget.get("max_calls") or 0):
+                replies.append({
+                    "agent": own.model_name, "ticker": ticker, "llm_called": False,
+                    "skipped": "data budget exhausted before the challenge",
+                })
+                continue
+            model = _find_model(staff, None, own.model_name)
+            if getattr(model, "_llm", None) is not None:
+                used += 1
+            reply = cio.challenge_view(model, ticker, own, signals)
+            reply["fixture"] = mission["execution_mode"] == "fixture"
+            replies.append(reply)
+            if reply.get("response"):
+                add_message(
+                    config, channel="model", author=own.model_name, body=reply["response"],
+                    mission_id=mission["id"], execution_mode=mission["execution_mode"],
+                )
+        # Both sides stay on the record. A concession does not delete the original signal.
         already = {t["agent"] for t in tasks if t["ticker"] == ticker and t["kind"] == "analyze"}
         extra = None
         if used < int(budget.get("max_calls") or 0):
             for strategy in mission["strategies"]:
-                for model in strategy["models"]:
-                    if model["name"] not in already:
-                        extra = (strategy["name"], model["name"])
+                for model_spec in strategy["models"]:
+                    if model_spec["name"] not in already:
+                        extra = (strategy["name"], model_spec["name"])
                         break
                 if extra:
                     break
         challenge_id = str(uuid.uuid4())
+        payload = {
+            "conflicts": detail,
+            "replies": replies,
+            "escalated": True,
+            "additional_analyst": extra[1] if extra else None,
+            "orders_placed": False,
+        }
         with transaction(config) as conn:
             conn.execute(
                 """INSERT INTO tasks(id, mission_id, parent_id, agent, strategy, kind, ticker, status,
-                     depends_on_json, attempt, max_attempts, depth, payload_json, created_at)
-                   VALUES (?, ?, NULL, 'cio', NULL, 'challenge', ?, 'completed', '[]', 1, 1, 1, ?, ?)""",
-                (challenge_id, mission["id"], ticker, dumps({
-                    "conflicts": detail, "escalated": True,
-                    "additional_analyst": extra[1] if extra else None,
-                }), utcnow()),
+                     depends_on_json, attempt, max_attempts, depth, payload_json, result_json, created_at, finished_at)
+                   VALUES (?, ?, NULL, 'cio', NULL, 'challenge', ?, 'completed', '[]', 1, 1, 1, ?, ?, ?, ?)""",
+                (challenge_id, mission["id"], ticker, dumps(payload), dumps(payload), utcnow(), utcnow()),
             )
             from office.db import _insert_event
             _insert_event(conn, channel="system", source="cio", entity_type="task", entity_id=challenge_id,
-                          state="reviewing", message=f"Conflict on {ticker} escalated to the CIO.",
-                          execution_mode=mission["execution_mode"], payload={"ticker": ticker})
+                          state="reviewing",
+                          message=f"Conflict on {ticker}: each side was asked at most once, then escalated to the CIO.",
+                          execution_mode=mission["execution_mode"],
+                          payload={"ticker": ticker, "replies": len(replies)})
+        decision_id = str(uuid.uuid4())
+        with transaction(config) as conn:
+            conn.execute(
+                """INSERT INTO cio_decisions(id, mission_id, kind, body, payload_json, execution_mode, created_at)
+                   VALUES (?, ?, 'escalation', ?, ?, ?, ?)""",
+                (decision_id, mission["id"],
+                 f"Escalated {ticker}. Original signals were not overwritten.",
+                 dumps(payload), mission["execution_mode"], utcnow()),
+            )
         if extra and int(budget.get("max_rounds") or 1) >= 2:
             follow_id = str(uuid.uuid4())
             with transaction(config) as conn:
@@ -328,13 +364,33 @@ def _consolidate(config, mission, fund) -> None:
     ]
     # tasks from _tasks already parsed payload
     conflicts = [t["payload"] for t in tasks if t["kind"] == "challenge"]
+    stored = []
+    for group in grouped.values():
+        stored.extend(group)
+    covered = {t["ticker"] for t in tasks if t["kind"] == "analyze" and t["status"] == "completed"}
+    uncovered = [t for t in mission["universe"] if t not in covered]
+    discovery = bool(mission["budget"].get("discovery", True))
     summary = {
         "proposal": proposal,
         "conflicts": conflicts,
+        "discovery": discovery,
+        "opportunities": cio.opportunities(stored) if discovery else [],
+        "uncovered": uncovered,
+        "discovery_note": (
+            "No technical screen. Opportunities are native signals outside the neutral band. "
+            "Names past the data budget are listed as uncovered and were not analyzed."
+            if discovery else
+            "Opportunity list was not requested. The analysts still ran only on the selected symbols. No technical screen was applied."
+        ),
         "tasks": len(tasks),
         "completed": sum(1 for t in tasks if t["status"] == "completed"),
         "failed": sum(1 for t in tasks if t["status"] == "failed"),
         "fixture": mission["execution_mode"] == "fixture",
+        "cio": (
+            "The office CIO compared stored signals, asked at most one language client on each "
+            "side of a conflict, and wrote this proposal with blend_signals and apply_limits. "
+            "It is not an AlphaModel and it did not call the broker."
+        ),
     }
     decision_id = str(uuid.uuid4())
     body = "CIO recorded an allocation proposal from stored signals. No order was sent."

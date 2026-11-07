@@ -84,6 +84,7 @@ export function Settings() {
   const agents = useData<{ agents: { name: string; display_name: string; kind: string }[] }>("/api/agents");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const parameters = useData<{ timeout_seconds: number; max_tokens: number; note: string; unsupported: string[] }>("/api/settings/parameters");
 
   async function saveModel(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -185,6 +186,31 @@ export function Settings() {
           <button className="primary" type="submit">Save override</button>
         </form>
       </div>
+      <form className="panel stack" onSubmit={async (event) => {
+        event.preventDefault();
+        setError(null);
+        const form = new FormData(event.currentTarget);
+        try {
+          await api("/api/settings/parameters", {
+            method: "PUT",
+            body: JSON.stringify({
+              timeout_seconds: Number(form.get("timeout_seconds")),
+              max_tokens: Number(form.get("max_tokens")),
+            }),
+          });
+          setNotice("Timeout and max tokens saved for office-built funds. make_llm has no temperature control.");
+          parameters.load();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "save failed");
+        }
+      }}>
+        <h3>Model parameters</h3>
+        <p className="empty">{parameters.data?.note}</p>
+        <label>Timeout seconds<input name="timeout_seconds" type="number" min={5} max={120} defaultValue={parameters.data?.timeout_seconds ?? 60} /></label>
+        <label>Max tokens<input name="max_tokens" type="number" min={256} max={8192} defaultValue={parameters.data?.max_tokens ?? 4096} /></label>
+        <button className="primary" type="submit">Save parameters</button>
+        <p className="empty">Unsupported by the engine client: {(parameters.data?.unsupported || ["temperature"]).join(", ")}.</p>
+      </form>
       <form className="panel stack" onSubmit={saveKey}>
         <h3>Credential</h3>
         <label>Variable

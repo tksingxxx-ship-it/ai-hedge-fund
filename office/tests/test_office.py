@@ -59,7 +59,12 @@ def test_fixture_research_runs_native_agents_and_persists(client):
     ]
     assert {s["model_name"] for s in signals} >= {"buffett", "druckenmiller", "pead"}
     assert any(s["reasoning"] and "Fixture response" in s["reasoning"] for s in signals if s["model_name"] == "buffett")
-    assert any(task["kind"] == "challenge" for task in mission["tasks"])
+    challenges = [task for task in mission["tasks"] if task["kind"] == "challenge"]
+    assert challenges
+    assert challenges[0]["result"]["replies"]
+    assert any(reply.get("response") for reply in challenges[0]["result"]["replies"])
+    assert mission["summary"]["opportunities"]
+    assert "AlphaModel" in mission["summary"]["cio"]
     assert mission["summary"]["conflicts"]
     events = client.get("/api/events").json()["events"]
     states = [e["state"] for e in events if e["source"] == "buffett"]
@@ -76,7 +81,8 @@ def test_live_research_without_keys_is_configuration_required(office_env, monkey
     from office.app import create_app
     from office.config import Config
 
-    with TestClient(create_app(Config.from_env())) as blocked:
+    from office.tests.conftest import GuardedClient
+    with GuardedClient(TestClient(create_app(Config.from_env()))) as blocked:
         response = blocked.post("/api/missions", json={
             "title": "Live",
             "strategies": ["deep-value"],
@@ -95,7 +101,8 @@ def test_fixture_off_is_rejected(office_env, monkeypatch):
     from office.app import create_app
     from office.config import Config
 
-    with TestClient(create_app(Config.from_env())) as blocked:
+    from office.tests.conftest import GuardedClient
+    with GuardedClient(TestClient(create_app(Config.from_env()))) as blocked:
         response = blocked.post("/api/missions", json={
             "title": "Nope",
             "strategies": ["earnings-drift"],
@@ -170,7 +177,8 @@ def test_cancel_flag_stops_backtest_before_the_engine_finishes(office_env):
                 }), utcnow(), utcnow()),
             )
         run_backtest(config, "job-cancel")
-        with TestClient(app) as again:
+        from office.tests.conftest import GuardedClient
+        with GuardedClient(TestClient(app)) as again:
             body = again.get("/api/backtests/job-cancel").json()
         assert body["status"] == "cancelled"
 
@@ -241,7 +249,8 @@ def test_restart_keeps_mission_and_ledger(office_env):
     from office.config import Config
 
     def new_client():
-        return TestClient(create_app(Config.from_env()))
+        from office.tests.conftest import GuardedClient
+        return GuardedClient(TestClient(create_app(Config.from_env())))
 
     with new_client() as first:
         response = first.post("/api/cio/coordinate", json={
@@ -296,7 +305,8 @@ def test_credential_store_requires_master_key_and_is_private(office_env, monkeyp
     from office.app import create_app
     from office.config import Config
 
-    with TestClient(create_app(Config.from_env())) as bare:
+    from office.tests.conftest import GuardedClient
+    with GuardedClient(TestClient(create_app(Config.from_env()))) as bare:
         blocked = bare.post("/api/settings/credentials", json={
             "env_var": "ANTHROPIC_API_KEY", "value": "sk-ant-notstored0123456789",
         })
@@ -304,7 +314,8 @@ def test_credential_store_requires_master_key_and_is_private(office_env, monkeyp
         assert "sk-ant-notstored" not in blocked.text
 
     monkeypatch.setenv("OFFICE_MASTER_KEY", "office-master-key-for-tests")
-    with TestClient(create_app(Config.from_env())) as locked:
+    from office.tests.conftest import GuardedClient
+    with GuardedClient(TestClient(create_app(Config.from_env()))) as locked:
         stored = locked.post("/api/settings/credentials", json={
             "env_var": "ANTHROPIC_API_KEY", "value": "sk-ant-storedvalue0123456789",
         })
@@ -320,12 +331,21 @@ def test_credential_store_requires_master_key_and_is_private(office_env, monkeyp
         assert "sk-ant-storedvalue" not in path.read_text()
 
 
-def test_universe_preset_warns_and_dedupes(client):
-    preset = client.get("/api/universes").json()["presets"][0]
-    assert preset["id"] == "us-swing-ndx-soxx"
+def test_universe_preset_is_the_publisher_snapshot(client):
+    body = client.get("/api/universes").json()
+    preset = body["presets"][0]
+    assert preset["verified"] is True
+    assert preset["current"] is False
     assert "survivorship" in preset["survivorship_warning"].lower()
-    assert len(preset["tickers"]) == len(set(preset["tickers"]))
-    assert "NVDA" in preset["tickers"] and "TSM" in preset["tickers"]
+    by_id = {c["id"]: c for c in preset["components"]}
+    assert by_id["nasdaq-100"]["as_of"] == "2026-11-06"
+    assert by_id["nasdaq-100"]["as_of_raw"] == "Nov 6, 2026"
+    assert by_id["nasdaq-100"]["source_url"].startswith("https://api.nasdaq.com/")
+    assert by_id["soxx-equity"]["as_of"] == "2026-11-05"
+    assert "USD" not in by_id["soxx-equity"]["tickers"]
+    assert "XTSLA" not in preset["tickers"]
+    assert preset["tickers"] == list(dict.fromkeys([*by_id["nasdaq-100"]["tickers"], *by_id["soxx-equity"]["tickers"]]))
+    assert "2026-03-01" not in client.get("/api/universes").text
 
 
 def test_cli_help_still_works():
@@ -333,6 +353,84 @@ def test_cli_help_still_works():
         proc = subprocess.run([sys.executable, "-m", "hedge_fund.run", *args], capture_output=True, text=True)
         assert proc.returncode == 0, proc.stderr
         assert "aihf" in proc.stdout
+
+
+def test_mutating_requests_require_the_office_header(office_env):
+    from fastapi.testclient import TestClient
+    from office.app import create_app
+    from office.config import Config
+    app = create_app(Config.from_env())
+    with TestClient(app) as raw:
+        missing = raw.post("/api/messages", json={"body": "hello"})
+        assert missing.status_code == 403
+        assert missing.json()["error"]["code"] == "csrf"
+        foreign = raw.post("/api/messages", json={"body": "hello"}, headers={
+            "X-Office-Request": "1", "Origin": "https://evil.example",
+        })
+        assert foreign.status_code == 403
+        assert foreign.json()["error"]["code"] == "origin"
+        assert "hello" not in foreign.text
+
+
+def test_remote_bind_is_refused_without_a_token(monkeypatch):
+    from office.config import Config
+    from office.security import bind_error
+    monkeypatch.setenv("OFFICE_HOST", "0.0.0.0")
+    monkeypatch.delenv("OFFICE_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("OFFICE_API_TOKEN", raising=False)
+    assert bind_error(Config.from_env())
+    monkeypatch.setenv("OFFICE_ALLOW_REMOTE", "1")
+    monkeypatch.setenv("OFFICE_API_TOKEN", "short")
+    assert bind_error(Config.from_env())
+    monkeypatch.setenv("OFFICE_API_TOKEN", "a-sufficiently-long-token")
+    assert bind_error(Config.from_env()) is None
+
+
+def test_catch_up_is_a_bounded_tick_loop(client):
+    import office.paperflow as paperflow
+    assert "serve" not in paperflow.execute_catch_up.__code__.co_names
+    mandate = client.post("/api/mandates", json={
+        "name": "catch-desk", "strategies": ["earnings-drift"], "rebalance": "daily",
+    })
+    assert mandate.status_code == 200, mandate.text
+    created = client.post("/api/paper/funds", json={
+        "name": "catcher", "mandate_name": "catch-desk", "tickers": ["AAPL"],
+        "execution_mode": "fixture", "max_symbols": 5,
+    })
+    assert created.status_code == 200, created.text
+    bare = client.post("/api/paper/funds/catcher/catch-up", json={"approval_id": "nope"})
+    assert bare.status_code == 403
+    approval = client.post("/api/paper/funds/catcher/approvals", json={"action": "catch_up", "sessions": 1})
+    assert approval.status_code == 200, approval.text
+    ran = client.post("/api/paper/funds/catcher/catch-up", json={"approval_id": approval.json()["id"]})
+    assert ran.status_code == 200, ran.text
+    assert ran.json()["result"]["runner"].startswith("bounded tick loop")
+    assert ran.json()["result"]["records"]
+    assert ran.json()["result"]["fixture"] is True
+    client.post("/api/paper/funds/catcher/halt", json={"reason": "stop the next batch"})
+    blocked = client.post("/api/paper/funds/catcher/approvals", json={"action": "catch_up", "sessions": 2})
+    assert blocked.status_code == 409
+
+
+def test_restart_marks_a_running_job_interrupted(office_env):
+    from office.app import create_app
+    from office.config import Config
+    from office.db import transaction, utcnow, dumps
+    from office.tests.conftest import GuardedClient
+    app = create_app(Config.from_env())
+    with GuardedClient(TestClient(app)) as first:
+        config = app.state.config
+        with transaction(config) as conn:
+            conn.execute(
+                """INSERT INTO jobs(id, kind, status, idempotency_key, request_json, execution_mode, created_at, updated_at)
+                   VALUES ('left-running', 'backtest', 'running', NULL, ?, 'fixture', ?, ?)""",
+                (dumps({"spec": {}}), utcnow(), utcnow()),
+            )
+    app2 = create_app(Config.from_env())
+    with GuardedClient(TestClient(app2)) as second:
+        body = second.get("/api/backtests/left-running").json()
+    assert body["status"] == "interrupted"
+    assert "restart" in (body.get("error") or "")
 
 
 def test_skip_risk_is_not_a_field(client):

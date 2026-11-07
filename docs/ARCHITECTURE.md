@@ -165,9 +165,22 @@ Live Financial Datasets and `make_llm` run only when the corresponding environme
 
 `OFFICE_ALLOW_FIXTURES=1` enables an explicit `execution_mode=fixture` path for tests and local dry runs. Fixture responses are labelled `fixture: true`. The flag defaults off. Fixture mode uses `office/fixtures.py` (`FixtureDataClient`, `FixtureLLM`) injected into the real agent classes and the real `backtest_fund` / `tick` functions. It is not a second backtester.
 
-### Universe preset
+### Universe snapshot
 
-`office/data/us_swing_ndx_soxx.json` is a static, deduplicated list of a Nasdaq-100 snapshot plus extra SOXX holdings. It is not a live index feed. The research UI shows a survivorship-bias warning when it is selected: current constituents used on earlier dates include names that were not in the index then and exclude names that left. Native strategies are not replaced by a swing-only agent. Cadence stays the mandate's `rebalance`.
+`office/data/us_swing_ndx_soxx.json` is the output of `office/universe_sources.py`, not a hand-written list.
+
+- Nasdaq list endpoint `https://api.nasdaq.com/api/quote/list-type/nasdaq100`. The date is the payload's `data.date` (Nov 6, 2026 on the fetch that wrote the file). Row count must match `totalrecords`.
+- iShares SOXX holdings CSV. The date is the `Fund Holdings as of` line (Nov 05, 2026). Only `Asset Class = Equity` is kept. Cash, collateral, money-market, and futures rows are dropped.
+
+`current` is false. The research screen states both publisher dates and the survivorship warning. `POST /api/universes/refresh` downloads those two URLs again. A failed download does not write a file and does not invent tickers. `validate_preset` rejects a file that lacks either source or that still contains a cash row.
+
+### Paper catch-up
+
+One approved session still calls `tick`. `POST /api/paper/funds/{name}/catch-up` calls `tick` up to the approved count (1–5), checks `Ledger.halted` before each one, and stops if the job is cancelled. It does not call `paper.runner.serve`. That CLI loop waits on the clock and would keep trading without a new approval.
+
+### Requests
+
+Mutating `/api` calls need `X-Office-Request: 1`. An `Origin` outside the local office (and the Vite port when dev CORS is on) is rejected. A non-loopback bind exits unless `OFFICE_ALLOW_REMOTE=1` and `OFFICE_API_TOKEN` is at least 16 characters, and then the token is required on mutating calls.
 
 ### Secrets
 

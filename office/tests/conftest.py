@@ -25,11 +25,41 @@ def office_env(tmp_path, monkeypatch):
     return tmp_path
 
 
+class GuardedClient:
+    """Adds the header a browser form post cannot set."""
+
+    def __init__(self, raw: TestClient) -> None:
+        self.raw = raw
+
+    def __enter__(self):
+        self.raw.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self.raw.__exit__(*args)
+
+    def get(self, url, **kwargs):
+        return self.raw.get(url, **kwargs)
+
+    def _mutate(self, method, url, **kwargs):
+        headers = {"X-Office-Request": "1", **(kwargs.pop("headers", None) or {})}
+        return getattr(self.raw, method)(url, headers=headers, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self._mutate("post", url, **kwargs)
+
+    def put(self, url, **kwargs):
+        return self._mutate("put", url, **kwargs)
+
+    def delete(self, url, **kwargs):
+        return self._mutate("delete", url, **kwargs)
+
+
 @pytest.fixture
 def client(office_env):
     from office.app import create_app
     from office.config import Config
 
     app = create_app(Config.from_env())
-    with TestClient(app) as test:
+    with GuardedClient(TestClient(app)) as test:
         yield test

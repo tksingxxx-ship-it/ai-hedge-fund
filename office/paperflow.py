@@ -133,6 +133,8 @@ def build_plan(config: Config, name: str) -> dict:
         "runnable": False,
         "action": None,
         "session": None,
+        "sessions": 1,
+        "head": None if latest is None else latest.hash,
         "reason": None,
     }
     if deployed.spec.is_intraday:
@@ -185,12 +187,25 @@ def _hash(plan: dict) -> str:
         "halted": plan.get("halted"),
         "pending_weights": plan.get("pending_weights"),
         "nav": plan.get("nav"),
+        "head": plan.get("head"),
+        "sessions": plan.get("sessions"),
     }
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def approve(config: Config, name: str, action: str) -> dict:
+def approve(config: Config, name: str, action: str, sessions: int = 1) -> dict:
     plan = build_plan(config, name)
+    if action == "catch_up":
+        if not 1 <= int(sessions) <= 5:
+            raise ValueError("a catch-up is 1 to 5 sessions")
+        plan["action"] = "catch_up"
+        plan["sessions"] = int(sessions)
+        plan["reason"] = (
+            f"Up to {int(sessions)} session(s) starting at {plan.get('session')}, "
+            "each one hedge_fund.paper.tick. aihf paper run is not started. "
+            "The kill switch is read before every session. Nothing has been sent yet."
+        )
+        plan["plan_hash"] = _hash(plan)
     if not plan.get("runnable") or plan.get("action") != action:
         raise ValueError(plan.get("reason") or "nothing to approve")
     approval_id = __import__("uuid").uuid4().hex
@@ -263,6 +278,111 @@ def execute(config: Config, name: str, approval_id: str) -> dict:
         conn.execute("UPDATE approvals SET result_json=? WHERE id=?", (dumps(payload), approval_id))
     return {"idempotent": False, "approval_id": approval_id, "record": payload,
             "execution_mode": mode, "fixture": mode == "fixture"}
+
+
+def execute_catch_up(config: Config, name: str, approval_id: str) -> dict:
+    """Advance up to the approved number of sessions. Does not call ``serve``.
+
+    ``aihf paper run`` stays on the CLI: that loop waits on the market clock
+    and would keep trading without a new approval. This loop is bounded by
+    the approval, checks the kill switch before each ``tick``, and stops when
+    the office job is cancelled.
+    """
+    approval = _approval(config, approval_id)
+    if approval is None or approval["fund_name"] != name:
+        raise PermissionError("approval not found for this fund")
+    if approval["status"] == "consumed" and approval.get("result"):
+        return {"idempotent": True, "approval_id": approval_id, "result": approval["result"],
+                "execution_mode": execution_mode(config, name), "fixture": execution_mode(config, name) == "fixture"}
+    if approval["status"] != "approved" or approval["action"] != "catch_up":
+        raise PermissionError("catch-up requires an unused catch_up approval")
+    plan = build_plan(config, name)
+    plan["action"] = "catch_up"
+    plan["sessions"] = approval["plan"].get("sessions")
+    plan["plan_hash"] = _hash(plan)
+    if plan.get("plan_hash") != approval["plan_hash"]:
+        raise ValueError("the plan changed since approval; approve the current plan")
+    if not plan.get("runnable"):
+        raise ValueError(plan.get("reason") or "fund is not runnable")
+    with transaction(config) as conn:
+        cur = conn.execute(
+            """UPDATE approvals SET status='consumed', consumed_at=?
+               WHERE id=? AND status='approved' AND plan_hash=?""",
+            (utcnow(), approval_id, approval["plan_hash"]),
+        )
+        if cur.rowcount != 1:
+            raise PermissionError("approval was already used")
+    job_id = __import__("uuid").uuid4().hex
+    stamp = utcnow()
+    with transaction(config) as conn:
+        conn.execute(
+            """INSERT INTO jobs(id, kind, status, idempotency_key, request_json, execution_mode, created_at, updated_at)
+               VALUES (?, 'paper_catch_up', 'running', ?, ?, ?, ?, ?)""",
+            (job_id, approval_id, dumps({"fund": name, "sessions": plan["sessions"]}),
+             execution_mode(config, name), stamp, stamp),
+        )
+    directory = fund_dir(config, name)
+    mode = execution_mode(config, name)
+    records = []
+    stopped = "completed"
+    try:
+        with data_client(config, mode) as client:
+            def builder(spec: FundSpec):
+                return build_fund(config, spec, mode=mode, blind=False)
+            for index in range(int(plan["sessions"])):
+                if _cancelled(config, job_id):
+                    stopped = "cancelled"
+                    break
+                if Ledger(directory).halted():
+                    stopped = "halted"
+                    break
+                try:
+                    record = tick(directory, client, build_fund=builder)
+                except NothingDue:
+                    stopped = "nothing_due"
+                    break
+                except FundHalted:
+                    stopped = "halted"
+                    break
+                payload = record.model_dump(mode="json")
+                payload["fixture"] = mode == "fixture"
+                payload["execution_mode"] = mode
+                records.append({"session": record.session, "nav": record.nav, "hash": record.hash})
+                with transaction(config) as conn:
+                    conn.execute(
+                        "UPDATE jobs SET progress_json=?, updated_at=? WHERE id=?",
+                        (dumps({"index": index + 1, "sessions": plan["sessions"], "last": records[-1]}), utcnow(), job_id),
+                    )
+    except (LedgerError, ConfigurationRequired, FixtureDisabled, ValueError) as exc:
+        from office.redact import redact
+        message = redact(str(exc))
+        with transaction(config) as conn:
+            conn.execute(
+                "UPDATE jobs SET status='failed', error=?, updated_at=? WHERE id=?",
+                (message, utcnow(), job_id),
+            )
+        raise
+    result = {
+        "job_id": job_id, "stopped": stopped, "records": records,
+        "fixture": mode == "fixture", "execution_mode": mode,
+        "runner": "bounded tick loop; the unattended runner was not started",
+    }
+    with transaction(config) as conn:
+        conn.execute(
+            "UPDATE jobs SET status=?, result_json=?, updated_at=? WHERE id=?",
+            ("cancelled" if stopped == "cancelled" else "completed", dumps(result), utcnow(), job_id),
+        )
+        conn.execute("UPDATE approvals SET result_json=? WHERE id=?", (dumps(result), approval_id))
+    return {"idempotent": False, "approval_id": approval_id, "result": result}
+
+
+def _cancelled(config: Config, job_id: str) -> bool:
+    conn = connect(config)
+    try:
+        row = conn.execute("SELECT cancel_requested FROM jobs WHERE id=?", (job_id,)).fetchone()
+    finally:
+        conn.close()
+    return row is not None and bool(row["cancel_requested"])
 
 
 def set_halt(config: Config, name: str, reason: str) -> dict:

@@ -53,8 +53,12 @@ Open http://127.0.0.1:8765 . The process binds to localhost. It does not deploy 
 | `OFFICE_DEV_CORS` | off | Allow the Vite dev server on port 5173. |
 | `OFFICE_MASTER_KEY` | unset | Required before the office will encrypt a credential. No default. |
 | `OFFICE_MAX_BACKTEST_SESSIONS` | `800` | Office cap. The CLI is not capped. |
+| `OFFICE_ALLOW_REMOTE` | off | Required together with a long `OFFICE_API_TOKEN` before a non-loopback bind is accepted. |
+| `OFFICE_API_TOKEN` | unset | If set, every mutating request must send `Authorization: Bearer ...`. |
 
-Provider and data keys are the ones in `.env.example`. The shell wins over `~/.hedge-fund/.env`, which wins over the encrypted office file. The UI never receives the values.
+Provider and data keys are the ones in `.env.example`. The shell wins over `~/.hedge-fund/.env`, which wins over the encrypted office file. The UI never receives the values. Mutating requests from the UI send `X-Office-Request: 1`. A foreign `Origin` is rejected. Binding `0.0.0.0` exits unless remote access and a token are both set.
+
+`POST /api/universes/refresh` re-downloads the Nasdaq list and the iShares SOXX CSV. The shipped file is the Nov 6 / Nov 5 2026 publisher snapshots. It is not labelled current.
 
 ### Frontend dev
 

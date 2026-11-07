@@ -136,6 +136,26 @@ export function PaperFund() {
     plan.load();
   }
 
+  async function catchUp() {
+    setError(null);
+    try {
+      const approved = await api<{ id: string }>(`/api/paper/funds/${name}/approvals`, {
+        method: "POST",
+        body: JSON.stringify({ action: "catch_up", sessions: 3 }),
+      });
+      const body = await api<{ result: { stopped: string; records: { session: string; nav: number }[]; fixture: boolean } }>(
+        `/api/paper/funds/${name}/catch-up`,
+        { method: "POST", body: JSON.stringify({ approval_id: approved.id }) },
+      );
+      const last = body.result.records[body.result.records.length - 1];
+      setRecord(`Catch-up ${body.result.stopped}, ${body.result.records.length} session(s)${last ? `, last ${last.session} NAV ${money(last.nav)}` : ""}${body.result.fixture ? " (fixture)" : ""}`);
+      plan.load();
+      sessions.load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "catch-up failed");
+    }
+  }
+
   return (
     <>
       <ErrorText error={error || plan.error} />
@@ -148,9 +168,11 @@ export function PaperFund() {
         <div className="actions">
           <button className="primary" disabled={!plan.data?.runnable} onClick={approve}>Approve this plan</button>
           <button className="primary" disabled={!approval} onClick={run}>Run approved session</button>
+          <button className="ghost" disabled={!plan.data?.runnable} onClick={catchUp}>Approve and run up to 3 sessions</button>
           <button className="danger" onClick={halt}>Halt</button>
           <button className="ghost" onClick={resume}>Resume</button>
         </div>
+        <p className="empty">The three-session button is a bounded tick loop. It is not `aihf paper run`, which stays on the CLI because that process waits on the clock and would keep going without a new approval.</p>
         {approval && <p className="empty">Approval {approval} is unused until you run it. Refreshing the plan after the market moves will make it stale.</p>}
         {record && <p>Recorded {record}</p>}
       </section>

@@ -16,6 +16,10 @@ from office.config import Config
 
 def main() -> None:
     config = Config.from_env()
+    from office.security import bind_error
+    problem = bind_error(config)
+    if problem:
+        raise SystemExit(problem)
     uvicorn.run(
         create_app(config),
         host=config.host,

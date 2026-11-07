@@ -1,45 +1,49 @@
-"""Symbol universes. The preset is data, not a new strategy."""
+"""Symbol universes. Only a verified publisher snapshot can be selected."""
 
 from __future__ import annotations
 
-import json
 import re
-from functools import lru_cache
 from pathlib import Path
 
 from hedge_fund.fund.spec import normalize_universe
 
-_PRESET = Path(__file__).resolve().parent / "data" / "us_swing_ndx_soxx.json"
+from office.universe_sources import PRESET_ID, UniverseUnverified, load_shipped
+
 _TICKER = re.compile(r"^[A-Z][A-Z0-9.\-]{0,14}$")
-HARD_CAP = 80
+HARD_CAP = 160
 
 
-@lru_cache(maxsize=1)
-def swing_preset() -> dict:
-    data = json.loads(_PRESET.read_text())
-    ndx = list(data["nasdaq_100"])
-    extra = list(data["soxx_extra"])
-    combined = normalize_universe([*ndx, *extra])
-    return {
-        "id": data["id"],
-        "name": data["name"],
-        "as_of": data["as_of"],
-        "source": data["source"],
-        "survivorship_warning": data["survivorship_warning"],
-        "note": data["note"],
-        "nasdaq_100_count": len(ndx),
-        "soxx_extra_count": len(extra),
-        "tickers": combined,
-        "count": len(combined),
-    }
+def swing_preset(override: Path | None = None) -> dict | None:
+    """A validated snapshot. An office-home file wins over the shipped one.
+
+    An invalid file is ignored. It is never repaired into a guessed list.
+    """
+    if override is not None and override.is_file():
+        try:
+            import json
+            from office.universe_sources import validate_preset
+            return validate_preset(json.loads(override.read_text()))
+        except (OSError, json.JSONDecodeError, UniverseUnverified):
+            pass
+    try:
+        return load_shipped()
+    except UniverseUnverified:
+        return None
 
 
 def parse_universe(tickers: list[str] | None, *, preset: str | None, max_symbols: int) -> tuple[list[str], str | None]:
-    if preset and preset != "us-swing-ndx-soxx":
-        raise ValueError(f"unknown universe preset {preset!r}")
     chosen: list[str] = []
     if preset:
-        chosen.extend(swing_preset()["tickers"])
+        if preset != PRESET_ID:
+            raise ValueError(f"unknown universe preset {preset!r}")
+        snapshot = swing_preset()
+        if snapshot is None:
+            raise ValueError(
+                "The US swing preset is not available. It is only enabled when the "
+                "shipped file still matches the Nasdaq list and the iShares SOXX equity file. "
+                "Import symbols explicitly, or run the universe refresh."
+            )
+        chosen.extend(snapshot["tickers"])
     if tickers:
         chosen.extend(tickers)
     universe = normalize_universe(chosen)
@@ -53,6 +57,6 @@ def parse_universe(tickers: list[str] | None, *, preset: str | None, max_symbols
     if len(universe) > max_symbols:
         raise ValueError(
             f"universe has {len(universe)} symbols and the data budget allows {max_symbols}. "
-            "Narrow the list or raise max_symbols."
+            "Narrow the list or raise max_symbols. The preset is not applied silently in part."
         )
     return universe, preset

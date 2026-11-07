@@ -32,6 +32,8 @@ class Config:
     host: str
     port: int
     max_backtest_sessions: int
+    allow_remote: bool
+    api_token: str
 
     @classmethod
     def from_env(cls) -> Config:
@@ -49,6 +51,8 @@ class Config:
             host=os.environ.get("OFFICE_HOST", "127.0.0.1"),
             port=int(os.environ.get("OFFICE_PORT", "8765")),
             max_backtest_sessions=int(os.environ.get("OFFICE_MAX_BACKTEST_SESSIONS", "800")),
+            allow_remote=_flag("OFFICE_ALLOW_REMOTE"),
+            api_token=os.environ.get("OFFICE_API_TOKEN", ""),
         )
 
     def ensure_dirs(self) -> None:

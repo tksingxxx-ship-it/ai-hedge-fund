@@ -6,7 +6,11 @@ import { pct, signed } from "../api";
 import { useData } from "./data";
 
 interface Strategy { name: string; display_name: string; description: string; models: { name: string }[] }
-interface Preset { id: string; name: string; as_of: string; count: number; survivorship_warning: string; source: string; note: string }
+interface Preset {
+  id: string; name: string; count: number; current: boolean; note: string;
+  survivorship_warning: string;
+  components: { id: string; as_of: string; as_of_raw: string; source_url: string; row_count: number }[];
+}
 interface Mission {
   id: string; title: string; status: string; as_of: string; execution_mode: string; fixture: boolean;
   universe: string[]; brief: string; summary?: Summary | null; error?: string | null;
@@ -15,17 +19,22 @@ interface Mission {
 interface Task {
   id: string; agent: string; ticker?: string; kind: string; status: string; strategy?: string;
   result?: { signal?: { value: number; reasoning?: string }; data?: { source?: string; price?: number | null; as_of?: string; coverage?: string }; fixture?: boolean };
-  payload?: { conflicts?: { agent: string; value: number; reasoning?: string }[] };
+  payload?: {
+    conflicts?: { agent: string; value: number; reasoning?: string }[];
+    replies?: { agent: string; response?: string; maintain?: boolean | null; skipped?: string }[];
+  };
 }
 interface Summary {
   proposal?: { final_weights?: Record<string, number>; note?: string; orders_placed?: boolean; clamps?: { limit: string; ticker?: string | null }[] };
-  conflicts?: { conflicts?: { agent: string; value: number }[] }[];
+  conflicts?: { conflicts?: { agent: string; value: number }[]; replies?: { agent: string; response?: string; maintain?: boolean | null }[] }[];
   completed?: number; failed?: number;
+  cio?: string; discovery_note?: string; uncovered?: string[];
+  opportunities?: { agent: string; ticker: string; value: number }[];
 }
 
 export function Research() {
   const strategies = useData<{ strategies: Strategy[] }>("/api/strategies");
-  const universes = useData<{ presets: Preset[] }>("/api/universes");
+  const universes = useData<{ presets: Preset[]; disabled_reason?: string | null }>("/api/universes");
   const missions = useData<{ missions: Mission[] }>("/api/missions");
   const health = useData<{ completed_through: string; fixtures_allowed: boolean }>("/api/health");
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +69,7 @@ export function Research() {
           max_calls: Number(form.get("max_calls") || 24),
           max_symbols: Number(form.get("max_symbols") || 20),
           timeout_seconds: Number(form.get("timeout") || 180),
+          discovery: form.get("discovery") === "on",
         }),
       });
       missions.load();
@@ -82,8 +92,16 @@ export function Research() {
             ))}
           </div>
           <label>Symbols<input name="tickers" placeholder="AAPL MSFT NVDA" /></label>
-          <label className="checks"><input type="checkbox" checked={presetOn} onChange={(e) => setPresetOn(e.target.checked)} /> Use {preset?.name || "preset"}</label>
-          {presetOn && preset && <div className="banner">{preset.survivorship_warning} Source: {preset.source} Snapshot {preset.as_of}. {preset.count} symbols. {preset.note}</div>}
+          <label className="checks"><input type="checkbox" name="discovery" defaultChecked /> Record opportunities from the analysts. No technical screen is applied.</label>
+          <label className="checks"><input type="checkbox" checked={presetOn} disabled={!preset} onChange={(e) => setPresetOn(e.target.checked)} /> Use the dated publisher snapshot ({preset ? `${preset.count} symbols, not a live membership` : "unavailable"})</label>
+          {universes.data?.disabled_reason && <div className="banner danger">{universes.data.disabled_reason}</div>}
+          {presetOn && preset && (
+            <div className="banner">
+              {preset.note} {preset.survivorship_warning}
+              {" "}{preset.components.map((c) => `${c.id} as of ${c.as_of_raw} (${c.source_url})`).join(" ")}
+              {" "}This is not labelled current.
+            </div>
+          )}
           <label>As of<input name="as_of" required value={asOf} onChange={(event) => setAsOf(event.target.value)} /></label>
           <label>Rebalance
             <select name="rebalance" defaultValue="weekly"><option>daily</option><option>weekly</option><option>monthly</option></select>
@@ -138,6 +156,12 @@ export function MissionPage() {
         <h3>Proposal</h3>
         <p className="empty">{data.summary?.proposal?.note || "No proposal stored."}</p>
         <p>Orders placed: {String(data.summary?.proposal?.orders_placed ?? false)}. Completed tasks {data.summary?.completed ?? "—"}, failed {data.summary?.failed ?? "—"}.</p>
+        {data.summary?.cio && <p className="empty">{data.summary.cio}</p>}
+        {data.summary?.discovery_note && <p className="empty">{data.summary.discovery_note}</p>}
+        {!!data.summary?.opportunities?.length && (
+          <p className="empty">Opportunities: {data.summary.opportunities.map((row) => `${row.agent} ${row.ticker} ${row.value.toFixed(2)}`).join(" · ")}</p>
+        )}
+        {!!data.summary?.uncovered?.length && <p className="empty">Not analyzed, budget: {data.summary.uncovered.join(", ")}</p>}
         {!!Object.keys(weights).length && (
           <table>
             <thead><tr><th>Symbol</th><th className="num">Final weight</th></tr></thead>
@@ -166,6 +190,9 @@ export function MissionPage() {
           <div key={task.id} className="finding">
             <Link to={`/tasks/${task.id}`}>{task.ticker}</Link>
             <div className="empty">{task.payload?.conflicts?.map((row) => `${row.agent} ${signed(row.value)}`).join(" · ")}</div>
+            {task.payload?.replies?.map((reply) => (
+              <p key={reply.agent} className="empty">{reply.agent}: {reply.maintain == null ? "no parsed reply" : reply.maintain ? "maintained" : "conceded"} — {reply.response || reply.skipped || ""}</p>
+            ))}
           </div>
         ))}
       </section>

@@ -31,6 +31,22 @@ def default_model(config: Config) -> str:
     return get_setting(config, "default_model") or os.environ.get("HEDGE_FUND_LLM_MODEL") or DEFAULT_MODEL
 
 
+def llm_parameters(config: Config) -> dict:
+    """The knobs make_llm actually accepts. Temperature is not one of them."""
+    from office.db import get_setting
+    try:
+        timeout = float(get_setting(config, "llm_timeout") or 60)
+    except ValueError:
+        timeout = 60.0
+    try:
+        max_tokens = int(get_setting(config, "llm_max_tokens") or 4096)
+    except ValueError:
+        max_tokens = 4096
+    timeout = min(120.0, max(5.0, timeout))
+    max_tokens = min(8192, max(256, max_tokens))
+    return {"timeout": timeout, "max_tokens": max_tokens}
+
+
 def agent_model(config: Config, agent: str) -> str | None:
     from office.db import get_setting
     return get_setting(config, f"agent_model:{agent}")
@@ -85,7 +101,7 @@ def build_fund(config: Config, spec: FundSpec, *, mode: str, blind: bool) -> Fun
                 override = agent_model(config, model.name)
                 if issubclass(cls, LLMAgent):
                     chosen = override or default_model(config)
-                    params = {**model.params, "llm": make_llm(chosen)}
+                    params = {**model.params, "llm": make_llm(chosen, **llm_parameters(config))}
                     if blind:
                         params["blind"] = True
                     staff.append(cls(**params))

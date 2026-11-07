@@ -22,21 +22,21 @@ Fixture means `OFFICE_ALLOW_FIXTURES=1` and `execution_mode=fixture`: the real a
 
 ## Commands and results
 
-Office API (fixture where the test says so; live-without-keys covered):
+Office API (fixture where the test says so; live-without-keys covered), after the follow-up on this branch:
 
 ```text
 poetry run pytest office/tests -q
-14 passed
+18 passed
 ```
 
-Original engine suite, after `hedge_fund/tui/fixtures.py` also passes `height` so Rich 14.3.4 keeps the documented 140-column width on a dumb terminal:
+Original engine suite:
 
 ```text
 poetry run pytest hedge_fund -q
 789 passed, 37 skipped
 ```
 
-The 37 skips are the engine's own skips (network and credential tests). They were skipped before this work.
+Together: 807 passed, 37 skipped. The 37 skips are the engine's own skips (network and credential tests). No failures.
 
 Browser, against the built UI and a fixture-enabled office:
 
@@ -54,5 +54,5 @@ Screenshots from that run are in `docs/evidence/` and are fixture-labelled on sc
 - Factor caps (`max_beta`, `max_sector_pct`, `max_volatility`) are not applied on the research proposal, because that path does not fit `exposures`. The omission is in the proposal payload. A backtest or paper tick still uses `assess_fund`, which does fit them.
 - Office backtests refuse windows above `OFFICE_MAX_BACKTEST_SESSIONS` (default 800). The CLI does not.
 - CPCV / PBO is still only a docstring in `hedge_fund/validation/`.
-- The Nasdaq-100 plus SOXX list is a static file dated 2026-03-01, not a vendor constituent feed. The UI warns about survivorship bias.
+- The swing universe is the Nasdaq list dated Nov 6, 2026 and SOXX equities dated Nov 5, 2026, parsed from those publishers. It is not labelled current. Cash and derivatives are excluded. Historical use is survivorship bias.
 - Per-agent model overrides apply only when the office builds the `Fund`. `aihf` still uses one `make_llm()` model.

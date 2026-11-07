@@ -18,6 +18,7 @@ from office.config import Config
 from office.db import init_db, recover_inflight
 from office.redact import install_redaction, redact
 from office.secrets import load_into_environ
+from office.security import install as install_guard
 
 log = logging.getLogger("office")
 DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -70,6 +71,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             "error": {"code": "internal", "message": redact(str(exc))}
         })
 
+    install_guard(app, config)
     register(app)
     if (DIST / "index.html").is_file():
         assets = DIST / "assets"

@@ -47,6 +47,21 @@ class FixtureLLM:
 
     def complete(self, system: str, user: str) -> str:
         self.calls += 1
+        if "CHALLENGE" in user:
+            # The office asked this persona's client to answer the other side.
+            # The text is still canned. It is not a second live model call.
+            for needle, signal, _confidence, _reasoning in _PERSONA:
+                if needle in system:
+                    maintain = signal != "neutral"
+                    return json.dumps({
+                        "maintain": maintain,
+                        "response": (
+                            f"Fixture challenge for the {needle} persona. "
+                            f"The stored {signal} view is {'kept' if maintain else 'not defended'}. "
+                            "Not a live model."
+                        ),
+                    })
+            return json.dumps({"maintain": False, "response": "Fixture challenge. No persona matched."})
         for needle, signal, confidence, reasoning in _PERSONA:
             if needle in system:
                 return json.dumps({"signal": signal, "confidence": confidence, "reasoning": reasoning})
